@@ -20,6 +20,7 @@ def arg_to_bool(x): return str(x).lower() == 'true'
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', default='cpu')
 parser.add_argument('--batch_size', default=64, type=int)
+parser.add_argument('--debug', type=arg_to_bool, default=False)
 args = parser.parse_args()
 
 @dataclass
@@ -191,20 +192,13 @@ ptch_size = 50
 dataset = SynthDataset(batch_size=args.batch_size, img_size=img_size)
 dataloader = DataLoader(dataset=dataset, num_workers=0, collate_fn=collate_fn)
 
-
 tsm = TileSniperModel().to(args.device)
 dm = DirectionModel()
 
 loss_fn = torch.nn.MSELoss()
+euclidean_loss = lambda a, b : torch.norm(a - b, 2)
 optimizer = torch.optim.Adam(tsm.parameters(), 0.001)
 
-# # cv2.imshow('img', img)
-# # cv2.waitKey(1)
-
-
-# # img = np.zeros((400, 300), dtype=np.uint8)
-# orignal = cv2.imread("pic.png")
-# orignal = cv2.cvtColor(orignal, cv2.COLOR_BGR2GRAY)
 
 @dataclass
 class TileStack:
@@ -213,12 +207,26 @@ class TileStack:
     lines_coords: List # coords in this stack scope
     scores: torch.tensor = None
     coords: torch.tensor = None
+    coords_scaled : torch.tensor = None
 
 
 def stack_sniper(ts, imgs_t):
     scores, coords = tsm.forward(ts.tiles_imgs)
     ts.scores = scores
     ts.coords = coords
+
+    # coords for tiles
+    x1, y1, x2, y2 = ts.tiles_coords
+    w = x2 - x1
+    h = y2 - y1
+
+    scaled = []
+    for c_x, c_y in ts.coords:
+        s_x = x1 + w * c_x
+        s_y = y1 + w * c_y
+        scaled.append(torch.stack([s_x, s_y]))
+    
+    ts.coords_scaled = torch.stack(scaled)
 
     return ts
 
@@ -243,6 +251,35 @@ def stack_iterator(n_portions, block_size, imgs_t, coords):
             yield TileStack(tiles_imgs, (x1, y1, x2, y2), lines_coords)
 
 
+def debug_stack_sniper(square, img, ts):
+    s = ((float(ts.scores[0].cpu().detach()) + 1) / 2) 
+    x1, y1, x2, y2 = ts.tiles_coords
+    # print(s)
+    
+    square = cv2.rectangle(square, (x1 + 2, y1 + 2), (x2 - 2, y2 - 2), (s), -1)
+
+    op = 0.5
+    overlay = cv2.addWeighted(img, op, square, 1-op, 0)
+
+    cv2.namedWindow("stack_sniper", cv2.WINDOW_NORMAL)
+    cv2.imshow("stack_sniper", overlay)
+    cv2.waitKey(1)
+
+
+def snake_walker(ts, img):
+    blank = img.copy()
+    
+    if ts.lines_coords[0]:
+        x, y = ts.coords_scaled[0]
+        blank = cv2.circle(img, (int(x), int(y)), 10, (1))
+
+        cv2.namedWindow("snake_walker", cv2.WINDOW_NORMAL)
+        cv2.imshow("snake_walker", blank)
+        cv2.waitKey(1)
+
+
+
+
 
 while True:
     for imgs_t, coords in dataloader:
@@ -255,31 +292,41 @@ while True:
         for ts in stack_iterator(n_portions, block_size, imgs_t, coords):
             ts = stack_sniper(ts, imgs_t)
 
-            # loss for TileSniper
+            # debug
+            if args.debug:
+                debug_stack_sniper(square, img, ts)
+
+            snake_walker(ts, img)
+
+
+            # loss for tile sniper
             scorings_truth = [torch.tensor(1) if lc else torch.tensor(0) for lc in ts.lines_coords]
             scorings_truth = torch.stack(scorings_truth).unsqueeze(-1).float()
             scorings_truth = scorings_truth.to(args.device)
 
-            # debug
-            s = ((float(ts.scores[0].cpu().detach()) + 1) / 2) 
-            x1, y1, x2, y2 = ts.tiles_coords
+            # loss for snake walker
+            coords_preds  = []
+            coords_truths = []
+            for lc, cs in zip(ts.lines_coords, ts.coords_scaled):
+                if not lc:
+                    continue
+                coords_truths.append(lc[0])
+                coords_preds.append(cs)
+
+            e_loss = torch.tensor(0)
+            if coords_preds and coords_truths:
+                coords_truths = torch.tensor(coords_truths).to(args.device).float()
+                coords_preds = torch.stack(coords_preds)
+
+                e_loss = euclidean_loss(coords_truths, coords_preds)
+
+                 
             
-            square = cv2.rectangle(square, (x1 + 2, y1 + 2), (x2 - 2, y2 - 2), (s), -1)
-
-            op = 0.5
-            overlay = cv2.addWeighted(img, op, square, 1-op, 0)
-
-            cv2.namedWindow("img", cv2.WINDOW_NORMAL)
-            cv2.imshow("img", overlay)
-            cv2.waitKey(1)
-
-
-
-            loss = loss_fn(ts.scores, scorings_truth)
-            print(s)
+            loss = loss_fn(ts.scores, scorings_truth) + e_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            print(loss)
 
 
 
@@ -302,19 +349,6 @@ while True:
                     x_patch = x + (patch_magnitude * np.cos(a))
                     y_patch = y + (patch_magnitude * np.sin(a))
                 
-
-       
-
-        
-        # imshow_sequences
-
-            
-
-        # cv2.imshow("img", img)
-        # cv2.waitKey(0)
-        # x=0
-
-
 
 
 
