@@ -27,39 +27,62 @@ class Rotor:
         return x, y
 
 @dataclass
-class RangeC: #C - container
+class RandRange:
     start: float
     end: float
 
     def __call__(self):
-        return self.start, self.end
+        return random.uniform(self.start, self.end)
 
 @dataclass
 class SquiggleGen:
     size: float = 1000
     n_rotors: int = 25
-    n_tail: int = 100
-    rotor_radius: RangeC = RangeC(10, 100)
-    rotor_coef: RangeC = RangeC(0.01, 0.001)
+    n_points: int = 100
+    rotor_radius: RandRange = RandRange(10, 50)
+    rotor_coef: RandRange = RandRange(0.01, 0.001)
     debug: bool = True
+
+    def pt_in_img(self, img, pt):
+        w, h = img.shape
+        x, y = pt
+        a = 0 < x < w
+        b = 0 < y < h
+        return a and b
 
     def gen_rots(self):
         rots = []
         for i in range(self.n_rotors):
-            radius = random.uniform(*self.rotor_radius())
-            coef = random.uniform(*self.rotor_coef())
+            radius = self.rotor_radius()
+            coef = self.rotor_coef()
             reverse = random.getrandbits(1)
             rot = Rotor(radius, coef, reverse) 
+            rot.t = RandRange(1, 1000)()
             rots.append(rot)
         return rots
 
-    def gen_imgs(self, n_samples, pos):
-        blank = np.zeros((self.size, self.size, 3))
-        rand_pos = lambda a, b : (random.randint(a, b), random.randint(a, b))
+    def calc_rots(self, img, rots, pos):
+        out_of_bb = False
         
-        for _ in range(n_samples):
+        for i, rot in enumerate(rots):
+            x, y = rot(pos)
+            pos = (int(x), int(y))
+
+            if not self.pt_in_img(img, pos):
+                out_of_bb = True
+                return out_of_bb, pos
+        return out_of_bb, pos
+
+    def gen_imgs(self, n_samples, pos):
+        blank = np.zeros((self.size, self.size))
+        rand_pos = lambda a, b : (random.randint(a, b), random.randint(a, b))
+
+        samples = []
+        coords = []
+        
+        while len(samples) < n_samples:
             rots = self.gen_rots()
-            coords = []
+            co = []
 
             a = rand_pos(0, self.size)
             b = rand_pos(0, self.size)
@@ -68,42 +91,39 @@ class SquiggleGen:
             points_on_line = np.linspace(a, b, 100) # 100 samples on the line
             points_on_line = points_on_line.tolist()
             points_on_line = [(int(x), int(y)) for x, y in points_on_line]
-            points_on_line = [pos for x in range(1000)]
+
+            points_on_line = [pos for x in range(self.n_points)]
 
             for pos in points_on_line:
                 img = blank.copy()
-                p = pos
+                out_of_bb, p = self.calc_rots(img, rots, pos)
 
-                for i, rot in enumerate(rots):
-                    x, y = rot(p)
-                    img = cv2.line(img, p, (int(x), int(y)), (1, 0, 0), 2)
-                    p = (int(x), int(y))
+                if out_of_bb:
+                    print("Out", id(img))
+                    break
                     
-                coords.append([x, y])
+                co.append(p)
+            
+            if len(co) < self.n_points:
+                continue
 
-                for prev, curr in zip(coords, coords[1:]):
-                    ax, ay = prev
-                    bx, by = curr
-                    a = (int(ax), int(ay))
-                    b = (int(bx), int(by))
-                    img = cv2.line(img, a, b, (1, 1, 1), 3)
+            for prev, curr in zip(co, co[1:]):
+                ax, ay = prev
+                bx, by = curr
+                a = (int(ax), int(ay))
+                b = (int(bx), int(by))
+                img = cv2.line(img, a, b, (1), 5)
 
+
+            if self.debug:
                 cv2.namedWindow("img", cv2.WINDOW_NORMAL)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
 
-                while len(coords) > self.n_tail:
-                    coords.pop(0)
 
-
-
-pos = (500, 500)
-
-
-sg = SquiggleGen()
-sg.gen_imgs(100, pos)
-
-# offset
+            samples.append(img)
+            coords.append(co)
+        return samples, coords
 
 
 
