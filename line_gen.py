@@ -3,6 +3,7 @@ import matplotlib
 import cv2
 from dataclasses import dataclass
 import random
+from helpers import pt_in_bb
 
 @dataclass
 class Rotor:
@@ -36,19 +37,12 @@ class RandRange:
 
 @dataclass
 class SquiggleGen:
-    size: float = 1000
+    size: float = 500
     n_rotors: int = 25
     n_points: int = 100
     rotor_radius: RandRange = RandRange(10, 50)
     rotor_coef: RandRange = RandRange(0.01, 0.001)
     debug: bool = True
-
-    def pt_in_img(self, img, pt):
-        w, h = img.shape
-        x, y = pt
-        a = 0 < x < w
-        b = 0 < y < h
-        return a and b
 
     def gen_rots(self):
         rots = []
@@ -63,12 +57,14 @@ class SquiggleGen:
 
     def calc_rots(self, img, rots, pos):
         out_of_bb = False
+        h, w = img.shape
+        bb = (0, 0, h, w)
         
         for i, rot in enumerate(rots):
             x, y = rot(pos)
             pos = (int(x), int(y))
 
-            if not self.pt_in_img(img, pos):
+            if not pt_in_bb(bb, pos):
                 out_of_bb = True
                 return out_of_bb, pos
         return out_of_bb, pos
@@ -113,7 +109,6 @@ class SquiggleGen:
                 a = (int(ax), int(ay))
                 b = (int(bx), int(by))
                 img = cv2.line(img, a, b, (1), 5)
-
 
             if self.debug:
                 cv2.namedWindow("img", cv2.WINDOW_NORMAL)
