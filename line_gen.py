@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib
 import cv2
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List
 import random
 from helpers import pt_in_bb
 
@@ -36,6 +37,12 @@ class RandRange:
         return random.uniform(self.start, self.end)
 
 @dataclass
+class Layer:
+    img: np.array
+    label_id: int
+    coords: list = field(default_factory=list)
+
+@dataclass
 class SquiggleGen:
     size: float = 500
     n_rotors: int = 25
@@ -55,10 +62,9 @@ class SquiggleGen:
             rots.append(rot)
         return rots
 
-    def calc_rots(self, img, rots, pos):
+    def calc_rots(self, rots, pos):
         out_of_bb = False
-        h, w = img.shape
-        bb = (0, 0, h, w)
+        bb = (0, 0, self.size, self.size)
         
         for i, rot in enumerate(rots):
             x, y = rot(pos)
@@ -69,56 +75,44 @@ class SquiggleGen:
                 return out_of_bb, pos
         return out_of_bb, pos
 
-    def gen_imgs(self, n_samples, pos):
+    def gen_img(self, n_layers, pos):
         blank = np.zeros((self.size, self.size))
-        rand_pos = lambda a, b : (random.randint(a, b), random.randint(a, b))
+        layers = []
 
-        samples = []
-        coords = []
-        
-        while len(samples) < n_samples:
+        # Layer
+        while len(layers) < n_layers:
+            layer = blank.copy()
+            coords = []
             rots = self.gen_rots()
-            co = []
-
-            a = rand_pos(0, self.size)
-            b = rand_pos(0, self.size)
-            # a = (0, 0)
-            # b = (s, s)
-            points_on_line = np.linspace(a, b, 100) # 100 samples on the line
-            points_on_line = points_on_line.tolist()
-            points_on_line = [(int(x), int(y)) for x, y in points_on_line]
-
-            points_on_line = [pos for x in range(self.n_points)]
-
-            for pos in points_on_line:
-                img = blank.copy()
-                out_of_bb, p = self.calc_rots(img, rots, pos)
+            
+            # Line generation
+            while len(coords) < self.n_points:
+                out_of_bb, p = self.calc_rots(rots, pos)
 
                 if out_of_bb:
-                    print("Out", id(img))
+                    print("Out", id(layer))
                     break
                     
-                co.append(p)
+                coords.append(p)
             
-            if len(co) < self.n_points:
+            if out_of_bb:
                 continue
-
-            for prev, curr in zip(co, co[1:]):
+            
+            for prev, curr in zip(coords, coords[1:]):
                 ax, ay = prev
                 bx, by = curr
                 a = (int(ax), int(ay))
                 b = (int(bx), int(by))
-                img = cv2.line(img, a, b, (1), 5)
+                layer = cv2.line(layer, a, b, (1), 5)
 
-            if self.debug:
-                cv2.namedWindow("img", cv2.WINDOW_NORMAL)
-                cv2.imshow("img", img)
-                cv2.waitKey(1)
+            l = Layer(img=layer, label_id=len(layers), coords=coords)
+            layers.append(l)
 
+        combined = blank.copy()
+        for i, l in enumerate(layers):
+            combined = cv2.addWeighted(combined, 1, l.img, 1, 0)
 
-            samples.append(img)
-            coords.append(co)
-        return samples, coords
+        return layers, combined
 
 
 

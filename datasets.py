@@ -21,19 +21,18 @@ class SynthDataset(Dataset):
 
 
     def __getitem__(self, idx):
-        imgs, coords = self.sg.gen_imgs(self.batch_size, self.start_pos)
-        # offset
+        layers, combined = self.sg.gen_img(2, self.start_pos)
 
-        imgs_t = torch.tensor(imgs).float()
-        imgs_t = imgs_t.unsqueeze(1) # Add channel dimennsion
-        return imgs_t, coords
+        imgs_t = torch.tensor(combined).float()
+        imgs_t = imgs_t.unsqueeze(0) # Add channel dimennsion
+        return layers, imgs_t
 
 def collate_fn(sub_batches):
+    b_layers = []
     b_imgs = []
-    b_coords = []
     
-    for imgs_t, coords in sub_batches:
+    for layers, imgs_t in sub_batches:
         b_imgs.append(imgs_t)
-        b_coords.extend(coords) 
+        b_layers.append(layers) 
     
-    return torch.cat(b_imgs), np.array(b_coords)
+    return torch.stack(b_imgs), b_layers
