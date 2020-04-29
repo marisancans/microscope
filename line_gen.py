@@ -39,15 +39,17 @@ class RandRange:
 @dataclass
 class Layer:
     img: np.array
+    mask: np.array
     label_id: int
     coords: list = field(default_factory=list)
 
+# uses furier series
 @dataclass
 class SquiggleGen:
     size: float = 500
-    n_rotors: int = 25
+    n_rotors: int = 3
     n_points: int = 100
-    rotor_radius: RandRange = RandRange(10, 50)
+    rotor_radius: RandRange = RandRange(5, 15)
     rotor_coef: RandRange = RandRange(0.01, 0.001)
     debug: bool = True
 
@@ -90,7 +92,7 @@ class SquiggleGen:
                 out_of_bb, p = self.calc_rots(rots, pos)
 
                 if out_of_bb:
-                    print("Out", id(layer))
+                    # print("Out", id(layer))
                     break
                     
                 coords.append(p)
@@ -103,16 +105,41 @@ class SquiggleGen:
                 bx, by = curr
                 a = (int(ax), int(ay))
                 b = (int(bx), int(by))
-                layer = cv2.line(layer, a, b, (1), 5)
+                layer = cv2.line(layer, a, b, (1), 2)
+                mask = layer.copy()
 
-            l = Layer(img=layer, label_id=len(layers), coords=coords)
+            # if len(layers):
+            #     layer = cv2.circle(layer, (5, 5), 10, (1), -1)
+            # else:
+            #     layer = cv2.circle(layer, (25, 25), 10, (1), -1)
+
+            mask = layer.copy()
+
+            l = Layer(img=layer, mask=mask, label_id=len(layers), coords=coords)
+
+            # check overlapping with previous masks
+            for prev in layers:
+                mask_bwx = cv2.bitwise_and(prev.mask, l.mask)
+                sub = prev.mask - mask_bwx
+                prev.mask = sub
+
             layers.append(l)
 
-        combined = blank.copy()
+        combined_img = blank.copy()
+        foreground_mask = blank.copy()
+        
         for i, l in enumerate(layers):
-            combined = cv2.addWeighted(combined, 1, l.img, 1, 0)
+            combined_img += l.img
+            foreground_mask += l.mask
+        cv2.namedWindow("img", cv2.WINDOW_GUI_NORMAL)
+        cv2.imshow("img", combined_img)
+        cv2.waitKey(1)
+        
+        # clip back to 0..1
+        combined_img = np.clip(combined_img, 0, 1.0)
+        foreground_mask = np.clip(foreground_mask, 0, 1.0)
 
-        return layers, combined
+        return layers, combined_img, foreground_mask
 
 
 
