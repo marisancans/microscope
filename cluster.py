@@ -178,16 +178,6 @@ class Clusterer:
 
             # mvs.append(membership_vector)            
 
-        if self.debug and self.pca_reduce == 2:
-            plt.cla()
-            plt.scatter(data.T[0], data.T[1], c = colors, alpha=1.0, linewidths=0, s=60)
 
-            for i, (d, l) in enumerate(zip(data, labels)):
-                x, y = d
-                # plt.text(x, y, f'{l}', fontsize=9)
-                if l == '-1':
-                    plt.scatter(x, y, c='red', alpha=0.5, linewidths=0, marker='X', s=90)
 
-            plt.show()
-
-        return labels, mvs, colors
+        return labels, mvs, colors, data

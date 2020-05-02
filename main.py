@@ -17,6 +17,10 @@ import hdbscan
 from sklearn.decomposition import PCA
 from cluster import Clusterer
 import argparse
+from helpers import RangeNormalize
+
+import seaborn as sns; sns.set()
+import matplotlib.pyplot as plt
 
 
 def arg_to_bool(x): return str(x).lower() == 'true'
@@ -40,10 +44,18 @@ class AddGaussianNoise(object):
         return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
 
+
+
 # params
-img_size = 32
+img_size = 256
 n_portions = 10
 block_size = img_size // n_portions # 50
+batch_size = 6
+n_objects_max = 2
+
+#discriminative
+delta_var = 0.5
+delta_dist = 1.5
 
 patch_magnitude = 25.0
 patch_size = 50
@@ -52,10 +64,10 @@ seg_binary_thershold = 0.5
 
 
 transforms=transforms.Compose([
-    AddGaussianNoise(0.01, 0.01)
+    AddGaussianNoise(0.2, 0.1)
 ])
 
-dataset = SynthDataset(img_size=img_size, transforms=transforms)
+dataset = SynthDataset(img_size=img_size, transforms=transforms, batch_size=batch_size)
 dataloader = DataLoader(batch_size=args.batch_size, dataset=dataset, num_workers=0, collate_fn=collate_fn)
 
 n_classes = 2
@@ -65,22 +77,23 @@ segmenter_model = UNet(n_channels=1, n_classes=2).to(args.device)
 instance_model = UNet(n_channels=1, n_classes=6).to(args.device)
 
 loss_binary = torch.nn.BCEWithLogitsLoss()
-discriminative_loss = DiscriminativeLoss(delta_var=0.5, delta_dist=1.5, norm=2, usegpu=True)
+discriminative_loss = DiscriminativeLoss(delta_var=delta_var, delta_dist=delta_dist, norm=2, usegpu=True)
 cross_entropy_fn = torch.nn.CrossEntropyLoss() 
 
 optimizer = torch.optim.Adam(list(instance_model.parameters()) + list(segmenter_model.parameters()), 0.001)
 
 
-def stack_iterator(n_portions, block_size, imgs_t):
+def stack_iterator(n_portions, block_size, stacks = []):
     for y in range(n_portions):
         for x in range(n_portions):
             y1 = y * block_size
             x1 = x * block_size
             y2 = (y + 1) * block_size
             x2 = (x + 1) * block_size
-            tile_imgs = imgs_t[:, :, y1:y2, x1:x2]
 
-            yield tile_imgs, (x1, y1, x2, y2)
+            crops = [s[:, :, y1:y2, x1:x2] for s in stacks]
+
+            yield crops, (x1, y1, x2, y2)
 
 def show(name, img, waitkey=0, pre_lambda=None):
     if isinstance(img, torch.Tensor):
@@ -94,13 +107,13 @@ def show(name, img, waitkey=0, pre_lambda=None):
 
 st_args = [n_portions, block_size]
 
-normalize = lambda x : (x - x.min())/(x.max() - x.min())
+normalize = lambda x : (x - x.min())/(x.max())
 
 
 # cluster
 clustering_algo = hdbscan.HDBSCAN(
-    min_cluster_size=32,
-    min_samples=32, 
+    min_cluster_size=64,
+    min_samples=128, 
     alpha=1.0, # do not change
     algorithm='generic', # for stability generic
     # metric='cosine', # cosine without PCA whitening
@@ -135,21 +148,19 @@ while True:
         canvas_pred = np.zeros((img_size, img_size))
         canvas_inst = np.zeros((img_size, img_size))
 
-        # pack = zip(stack_iterator(*st_args, combined_imgs_t), stack_iterator(*st_args, combined_masks_t), stack_iterator(*st_args, masks_t))
+        # pack = stack_iterator(*st_args, stacks=[combined_imgs_t, fore_back_masks_t, masks_t])
 
-        # for (ts, ts_coords), (ts_combined_mask, ts_combined_mask_coords), (ts_mask, ts_mask_coords) in pack:
+        # for (c_combined, c_fore_back, c_masks), coords in pack:
 
-        # masks_pred = segmenter_model.forward(combined_imgs_t)
-        # sem_seg_predictions, ins_seg_predictions = instance_model.forward(combined_imgs_t)
         ins_seg_predictions = instance_model.forward(combined_imgs_t)
         sem_seg_predictions = segmenter_model.forward(combined_imgs_t)
-        # x=0
 
-        # p = masks_pred[0][0].cpu().detach().numpy()
+
+        # p = ins_seg_predictions[0][0].cpu().detach().numpy()
         # cv2.namedWindow("pred", cv2.WINDOW_NORMAL)
         # cv2.imshow("pred", p)
 
-        # m = ts_combined_mask[0][0].cpu().detach().numpy().astype(float)
+        # m = sem_seg_predictions[0][0].cpu().detach().numpy().astype(float)
         # cv2.namedWindow("truth", cv2.WINDOW_NORMAL)
         # cv2.imshow("truth", m)
 
@@ -188,35 +199,21 @@ while True:
             thresh_foreground = foreground > seg_binary_thershold  
             thresh_background = background > seg_binary_thershold  
 
-            show("thresh", thresh_foreground, 0, lambda x: x*255.0)
-            show("foreground", foreground, 0)
-            show("background", background, 0)
+            # show("thresh", thresh_foreground, 0, lambda x: x*255.0)
             nonzeros_idxs.append(thresh_foreground.nonzero())         
 
-            # sub = [] 
             non = [torch.masked_select(i, thresh_foreground) for i in ins]
             non = torch.stack(non)
             non = non.permute(1, 0) # swap embeds to piexel dims
             nonzeros.append(non)
 
-            for i in ins:
-                i[thresh_background] = 0
-                # sub.append(i)
+            
 
-            # sub = torch.cat(sub, 0)          
-
-            # show("w_mask", normalize(sub.detach().cpu().numpy()))
-            # show("sub", s)
-        # nonzeros = [x.view(-1) for x in nonzeros]
-        # nonzeros = [x.detach().cpu().numpy() for x in nonzeros]
-        x=0
-
-
-
-        n_objects = torch.tensor([2]* 6).to(args.device)
+        n_objects = [n_objects_max] * batch_size
+        n_objects = torch.tensor(n_objects).to(args.device)
 
         # discriminative loss
-        loss = discriminative_loss.forward(ins_seg_predictions, masks_t, n_objects, 2)
+        loss = discriminative_loss.forward(ins_seg_predictions, masks_t, n_objects, n_objects_max)
 
         # cross entropy loss
         # _, sem_seg_annotations_criterion_ce = sem_seg_predictions.max(1)
@@ -224,57 +221,53 @@ while True:
         # loss += ce_loss
 
         # dice loss
-        # sem_seg_predictions, gpu_sem_seg_annotations
         dice_loss = dice_loss_fn(sem_seg_predictions, fore_back_masks_t)
         loss += dice_loss
-
-        ins_seg_np = ins_seg_predictions.detach().cpu().numpy()
-        ins_seg_np = normalize(ins_seg_np)
-
-        sem_seg_np = sem_seg_predictions.detach().cpu().numpy()
-
-        masks_np = masks_t.detach().cpu().numpy()
-
-
-
-
-        
+       
 
         if batch > 10:
             embedding_clusterer = Clusterer(clustering_algo, pca_n_components, debug=True) 
 
-            # per sample in batch
-            # for n in nonzeros:
-            # non_np = [x.detach().cpu().numpy() for x in n]
-            labels, mvs, colors = embedding_clusterer(nonzeros[0].detach().cpu().numpy(), pca)
 
+            nonzeros_np = [x.detach().cpu().numpy() for x in nonzeros]
             nonzeros_idxs_np = [x.detach().cpu().numpy() for x in nonzeros_idxs]
+            cluster_results = [embedding_clusterer(n, pca) for n in nonzeros_np]
+          
+            debug_pack = zip(combined_imgs_t, ins_seg_predictions, masks_t, sem_seg_predictions, cluster_results, nonzeros_idxs_np)
 
-            n1 = nonzeros_idxs_np[0]
+            for b_inputs, b_istances, b_masks, b_segmented, (labels, mvs, colors, reduced), idxs in debug_pack:
 
-            remapped = np.zeros((img_size, img_size, 3))
+                # draw reduced 
+                plt.cla()
+                plt.scatter(reduced.T[0], reduced.T[1], c = colors, alpha=1.0, linewidths=0, s=60)
 
-            for n, c in zip(n1, colors):
-                x, y = n
-                remapped[x][y] = c
+                for i, (d, l) in enumerate(zip(reduced, labels)):
+                    x, y = d
+                    # plt.text(x, y, f'{l}', fontsize=9)
+                    if l == '-1':
+                        plt.scatter(x, y, c='red', alpha=0.5, linewidths=0, marker='X', s=90)
 
-            show("remapped", remapped, 1)
+                plt.show()
 
+                # remapping to spatial dim
+                remap_canvas = np.zeros((img_size, img_size, 3))
+                
+                for n, c in zip(idxs, colors):
+                    x, y = n
+                    remap_canvas[x][y] = c
 
+                b_inputs = b_inputs.reshape(-1, img_size)
+                b_istances = b_istances.reshape(-1, img_size)
+                b_masks = b_masks.view(-1, img_size)
+                b_segmented = b_segmented.view(-1, img_size)
 
-            for b_istances, b_masks, b_segmented in zip(ins_seg_np, masks_np, sem_seg_np):
-            #     # print(input_np.shape, target_np.shape)
-            #     # b = b.permute(1, 2, 0).numpy()
-                b_istances = np.vstack(b_istances)
-            #     b_masks = np.vstack(b_masks)
-            #     b_segmented = np.vstack(b_segmented)
+                rn = RangeNormalize(0, 1.0)
 
-                cv2.namedWindow("instances", cv2.WINDOW_NORMAL)
-                cv2.imshow("instances", b_istances)
-            #     cv2.namedWindow("masks", cv2.WINDOW_NORMAL)
-            #     cv2.imshow("masks", b_masks)
-            #     cv2.namedWindow("segmented", cv2.WINDOW_NORMAL)
-            #     cv2.imshow("segmeted", b_segmented)
+                show("inputs", b_inputs)
+                show("instances", rn(b_istances))
+                show("masks", b_masks)
+                show("segmeted", b_segmented)
+                show("remapped", remap_canvas)
                 cv2.waitKey(1)
 
     

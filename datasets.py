@@ -9,6 +9,7 @@ import cv2
 @dataclass
 class SynthDataset(Dataset):
     img_size: int = 500
+    batch_size: int = 6
     start_pos: Tuple[int, int] = None
     transforms: list = None
 
@@ -18,7 +19,7 @@ class SynthDataset(Dataset):
         self.sg = SquiggleGen(size = self.img_size, debug=False)
 
     def __len__(self):
-        return 6
+        return self.batch_size
 
 
     def __getitem__(self, idx):
