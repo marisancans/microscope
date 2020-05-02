@@ -24,8 +24,8 @@ def calculate_means(pred, gt, n_objects, max_n_objects, usegpu):
         # n_loc, n_objects, 1
         _gt_expanded_sample = gt_expanded[i, :, : _n_objects_sample]
 
-        _mean_sample = _pred_masked_sample.sum(
-            0) / _gt_expanded_sample.sum(0)  # n_objects, n_filters
+        _mean_sample = _pred_masked_sample.sum(0) / _gt_expanded_sample.sum(0)  # n_objects, n_filters
+
         if (max_n_objects - _n_objects_sample) != 0:
             n_fill_objects = int(max_n_objects - _n_objects_sample)
             _fill_sample = torch.zeros(n_fill_objects, n_filters)
@@ -35,6 +35,7 @@ def calculate_means(pred, gt, n_objects, max_n_objects, usegpu):
         means.append(_mean_sample)
 
     means = torch.stack(means)
+
 
     # means = pred_masked.sum(1) / gt_expanded.sum(1)
     # # bs, n_instances, n_filters
@@ -141,6 +142,9 @@ def discriminative_loss(input, target, n_objects,
 
     cluster_means = calculate_means(
         input, target, n_objects, max_n_objects, usegpu)
+    
+    # if cluster_means.mean() == 0:
+    #     return 0
 
     var_term = calculate_variance_term(
         input, target, cluster_means, n_objects, delta_v, norm)
@@ -168,6 +172,5 @@ class DiscriminativeLoss():
         assert self.norm in [1, 2]
 
     def forward(self, input, target, n_objects, max_n_objects):
-        return discriminative_loss(input, target, n_objects, max_n_objects,
-                                   self.delta_var, self.delta_dist, self.norm,
-                                   self.usegpu)
+        return discriminative_loss(input, target, n_objects, max_n_objects, 
+                                   self.delta_var, self.delta_dist, self.norm,self.usegpu)

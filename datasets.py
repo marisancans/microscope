@@ -10,6 +10,7 @@ import cv2
 class SynthDataset(Dataset):
     img_size: int = 500
     batch_size: int = 6
+    layer_count: int = 3
     start_pos: Tuple[int, int] = None
     transforms: list = None
 
@@ -23,7 +24,7 @@ class SynthDataset(Dataset):
 
 
     def __getitem__(self, idx):
-        layers, combined_img, foreground_mask = self.sg.gen_img(2, self.start_pos)
+        layers, combined_img, foreground_mask = self.sg.gen_img(self.layer_count, self.start_pos)
 
         combined_img_t = torch.tensor(combined_img).float()
         combined_img_t = combined_img_t.unsqueeze(0) # Add channel dimennsion
