@@ -47,7 +47,7 @@ class AddGaussianNoise(object):
 
 
 # params
-img_size = 256
+img_size = 32
 n_portions = 10
 block_size = img_size // n_portions # 50
 batch_size = 6
@@ -64,7 +64,7 @@ seg_binary_thershold = 0.5
 
 
 transforms=transforms.Compose([
-    AddGaussianNoise(0.2, 0.1)
+    AddGaussianNoise(0.1, 0.025)
 ])
 
 dataset = SynthDataset(img_size=img_size, transforms=transforms, batch_size=batch_size)
@@ -95,11 +95,17 @@ def stack_iterator(n_portions, block_size, stacks = []):
 
             yield crops, (x1, y1, x2, y2)
 
-def show(name, img, waitkey=0, pre_lambda=None):
+# colormaps: https://www.learnopencv.com/applycolormap-for-pseudocoloring-in-opencv-c-python
+def show(name, img, waitkey=0, color_map = None, pre_lambda=None):
     if isinstance(img, torch.Tensor):
         img = img.detach().cpu().numpy()
         if pre_lambda:
             img = pre_lambda(img) 
+
+    if color_map:
+        if img.dtype == np.float32 or img.dtype == np.float64:
+            img = (img * 255.0).astype(np.uint8)
+        img = cv2.applyColorMap(img, color_map)
 
     cv2.namedWindow(name, cv2.WINDOW_NORMAL)
     cv2.imshow(name, img)
@@ -112,15 +118,15 @@ normalize = lambda x : (x - x.min())/(x.max())
 
 # cluster
 clustering_algo = hdbscan.HDBSCAN(
-    min_cluster_size=64,
-    min_samples=128, 
+    min_cluster_size=32,
+    min_samples=32, 
     alpha=1.0, # do not change
     algorithm='generic', # for stability generic
     # metric='cosine', # cosine without PCA whitening
     metric='cosine', # PCA whitening + euclidean works good
     core_dist_n_jobs=8,
     match_reference_implementation=True,
-    allow_single_cluster=False # some cases work better others not, need to test
+    allow_single_cluster=True # some cases work better others not, need to test
 )
 
 # PCA
@@ -128,7 +134,7 @@ pca_n_components = 2
 
 pca = PCA(
     n_components=pca_n_components, # dim to reduce it
-    whiten=True, # if cosine then whiten not needed
+    whiten=False, # if cosine then whiten not needed
     svd_solver='full'
 )       
 
@@ -235,13 +241,16 @@ while True:
           
             debug_pack = zip(combined_imgs_t, ins_seg_predictions, masks_t, sem_seg_predictions, cluster_results, nonzeros_idxs_np)
 
-            for b_inputs, b_istances, b_masks, b_segmented, (labels, mvs, colors, reduced), idxs in debug_pack:
+            for b_inputs, b_istances, b_masks, b_segmented, cluster_result, idxs in debug_pack:
+                if not cluster_result.success:
+                    print("Skipped, not enough embeddings")
+                    continue
 
                 # draw reduced 
                 plt.cla()
-                plt.scatter(reduced.T[0], reduced.T[1], c = colors, alpha=1.0, linewidths=0, s=60)
+                plt.scatter(cluster_result.reduced.T[0], cluster_result.reduced.T[1], c = cluster_result.colors, alpha=1.0, linewidths=0, s=60)
 
-                for i, (d, l) in enumerate(zip(reduced, labels)):
+                for i, (d, l) in enumerate(zip(cluster_result.reduced, cluster_result.labels)):
                     x, y = d
                     # plt.text(x, y, f'{l}', fontsize=9)
                     if l == '-1':
@@ -252,7 +261,7 @@ while True:
                 # remapping to spatial dim
                 remap_canvas = np.zeros((img_size, img_size, 3))
                 
-                for n, c in zip(idxs, colors):
+                for n, c in zip(idxs, cluster_result.colors):
                     x, y = n
                     remap_canvas[x][y] = c
 
@@ -264,7 +273,7 @@ while True:
                 rn = RangeNormalize(0, 1.0)
 
                 show("inputs", b_inputs)
-                show("instances", rn(b_istances))
+                show("instances", rn(b_istances), color_map=cv2.COLORMAP_HSV )
                 show("masks", b_masks)
                 show("segmeted", b_segmented)
                 show("remapped", remap_canvas)

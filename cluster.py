@@ -3,7 +3,7 @@ import seaborn as sns; sns.set()
 import matplotlib.pyplot as plt
 import hdbscan
 from scipy.spatial.distance import cdist
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hdbscan
 plt.ion()
 
@@ -129,6 +129,15 @@ def prob_in_some_cluster(point, tree, cluster_ids, point_dict, max_lambda_dict):
     return height / max_lambda
 
 @dataclass
+class ClusterRestult:
+    labels: list = field(default_factory=list)
+    mvs: list = field(default_factory=list)
+    colors: list = field(default_factory=list)
+    reduced: list = field(default_factory=list)
+    success: bool = False
+
+
+@dataclass
 class Clusterer:
     cluster_algo: hdbscan.HDBSCAN
     pca_reduce: int 
@@ -137,19 +146,24 @@ class Clusterer:
     def __call__(self, embeds, pca=None):
         data = np.array(embeds)
 
+        result = ClusterRestult()
+
+        if len(data) < 2:
+            return result
+
         if pca:
-            data = pca.fit_transform(data)
-            data = data.astype(np.double)
+            reduced = pca.fit_transform(data)
+            reduced = reduced.astype(np.double)
         
         clusterer = self.cluster_algo
-        clusterer = clusterer.fit(data)
+        clusterer = clusterer.fit(reduced)
 
 
         tree = clusterer.condensed_tree_
         exemplar_dict = {c:exemplars(c,tree) for c in tree._select_clusters()}
         cluster_ids = tree._select_clusters()
         raw_tree = tree._raw_tree
-        all_possible_clusters = np.arange(data.shape[0], raw_tree['parent'].max() + 1).astype(np.float64)
+        all_possible_clusters = np.arange(reduced.shape[0], raw_tree['parent'].max() + 1).astype(np.float64)
         max_lambda_dict = {c:max_lambda_val(c, raw_tree) for c in all_possible_clusters}
         point_dict = {c:set(points_in_cluster(c, raw_tree)) for c in all_possible_clusters}
         
@@ -165,10 +179,10 @@ class Clusterer:
 
             # colors = [sns.desaturate(pal[col], sat) for col, sat in zip(clusterer.labels_, clusterer.probabilities_)]
             colors = [pal[col] for i, col in enumerate(clusterer.labels_)]
-            # colors = np.empty((data.shape[0], 3))
+            # colors = np.empty((reduced.shape[0], 3))
         
-        # for x in range(data.shape[0]):
-            # membership_vector = combined_membership_vector(x, data, tree, exemplar_dict, cluster_ids, max_lambda_dict, point_dict, False)
+        # for x in range(reduced.shape[0]):
+            # membership_vector = combined_membership_vector(x, reduced, tree, exemplar_dict, cluster_ids, max_lambda_dict, point_dict, False)
             # membership_vector *= prob_in_some_cluster(x, tree, cluster_ids, point_dict, max_lambda_dict)
             
             # if self.debug and self.pca_reduce == 2:
@@ -179,5 +193,9 @@ class Clusterer:
             # mvs.append(membership_vector)            
 
 
-
-        return labels, mvs, colors, data
+        result.labels = labels
+        result.mvs = mvs
+        result.colors = colors
+        result.reduced = reduced
+        result.success = True
+        return result

@@ -55,6 +55,7 @@ class SquiggleGen:
     rotor_coef: RandRange = RandRange(0.01, 0.001)
     spawn_radius: int = 500
     debug: bool = True
+    line_width: int = 2
 
     def gen_rots(self):
         rots = []
@@ -128,14 +129,14 @@ class SquiggleGen:
                 if not pt_in_bb(bb, p):
                     break
 
-            line_width = 5
+            
             for prev, curr in zip(coords, coords[1:]):
                 ax, ay = prev
                 bx, by = curr
                 a = (int(ax), int(ay))
                 b = (int(bx), int(by))
-                layer = cv2.line(layer, a, b, (line_color), line_width)
-                mask = cv2.line(mask, a, b, (1), line_width)
+                layer = cv2.line(layer, a, b, (line_color), self.line_width)
+                mask = cv2.line(mask, a, b, (1), self.line_width)
 
             # if len(layers):
             #     layer = cv2.circle(layer, (5, 5), 10, (1), -1)
